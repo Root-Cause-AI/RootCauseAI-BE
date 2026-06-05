@@ -65,3 +65,4 @@ truststore.jks
 .DS_Store
 
 
+.env.example
