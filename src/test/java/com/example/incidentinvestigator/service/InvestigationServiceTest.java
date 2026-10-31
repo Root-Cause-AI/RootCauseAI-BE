@@ -46,6 +46,12 @@ class InvestigationServiceTest {
     private IncidentAnalysisService analysisService;
 
     @Mock
+    private com.example.incidentinvestigator.agent.orchestrator.InvestigationOrchestrator orchestrator;
+
+    @Mock
+    private com.example.incidentinvestigator.repository.InvestigationJobRepository jobRepository;
+
+    @Mock
     private InvestigationContextBuilder contextBuilder;
 
     @Mock
@@ -109,7 +115,7 @@ class InvestigationServiceTest {
             when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(testIncident));
             when(reportRepository.findByIncidentId(incidentId)).thenReturn(Optional.empty());
             when(contextBuilder.buildContext(any())).thenReturn(List.of());
-            when(analysisService.analyze(any(), any(), any(), any()))
+            when(orchestrator.orchestrate(any(), any()))
                     .thenReturn(aiResponse);
             when(mapper.toReportEntity(any(), any(), any())).thenReturn(testReport);
             when(reportRepository.save(testReport)).thenReturn(testReport);
@@ -124,24 +130,26 @@ class InvestigationServiceTest {
         }
 
         @Test
-        @DisplayName("should delete existing report before re-analysis")
-        void shouldDeleteExistingReport() {
+        @DisplayName("should update existing report in-place on re-analysis")
+        void shouldUpdateExistingReportInPlace() {
             InvestigationReport existingReport = InvestigationReport.builder()
                     .id(UUID.randomUUID())
+                    .incident(testIncident)
                     .build();
 
             when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(testIncident));
             when(reportRepository.findByIncidentId(incidentId)).thenReturn(Optional.of(existingReport));
             when(contextBuilder.buildContext(any())).thenReturn(List.of());
-            when(analysisService.analyze(any(), any(), any(), any())).thenReturn(aiResponse);
-            when(mapper.toReportEntity(any(), any(), any())).thenReturn(testReport);
-            when(reportRepository.save(testReport)).thenReturn(testReport);
-            when(mapper.toReportResponse(testReport)).thenReturn(testReportResponse);
+            when(orchestrator.orchestrate(any(), any())).thenReturn(aiResponse);
+            when(mapper.updateReportEntity(any(), any(), any())).thenReturn(existingReport);
+            when(reportRepository.save(existingReport)).thenReturn(existingReport);
+            when(mapper.toReportResponse(existingReport)).thenReturn(testReportResponse);
 
             investigationService.analyzeIncident(incidentId);
 
-            verify(reportRepository).delete(existingReport);
-            verify(reportRepository).flush();
+            verify(mapper).updateReportEntity(existingReport, aiResponse, List.of());
+            verify(reportRepository).save(existingReport);
+            verify(reportRepository, never()).delete(any());
         }
 
         @Test
@@ -153,7 +161,7 @@ class InvestigationServiceTest {
             assertThatThrownBy(() -> investigationService.analyzeIncident(missingId))
                     .isInstanceOf(ResourceNotFoundException.class);
 
-            verify(analysisService, never()).analyze(any(), any(), any(), any());
+            verify(orchestrator, never()).orchestrate(any(), any());
         }
     }
 

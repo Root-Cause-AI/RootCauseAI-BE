@@ -37,6 +37,12 @@ spring:
         embedding:
           options:
             model: ${GEMINI_EMBEDDING_MODEL}
+    mcp:
+      server:
+        enabled: true
+        name: rootcause-ai-investigator
+        version: 1.0.0
+        type: SYNC
 
   servlet:
     multipart:

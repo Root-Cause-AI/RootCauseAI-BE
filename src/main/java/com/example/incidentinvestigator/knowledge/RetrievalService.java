@@ -37,13 +37,22 @@ public class RetrievalService {
     private final KnowledgeChunkRepository chunkRepository;
     private final KnowledgeDocumentRepository documentRepository;
     private final EmbeddingService embeddingService;
+    private final com.example.incidentinvestigator.knowledge.advanced.FullTextQuerySanitizer querySanitizer;
+    private final com.example.incidentinvestigator.knowledge.advanced.QueryDecomposer queryDecomposer;
+    private final com.example.incidentinvestigator.knowledge.advanced.RelevanceReranker relevanceReranker;
 
     public RetrievalService(KnowledgeChunkRepository chunkRepository,
                             KnowledgeDocumentRepository documentRepository,
-                            EmbeddingService embeddingService) {
+                            EmbeddingService embeddingService,
+                            com.example.incidentinvestigator.knowledge.advanced.FullTextQuerySanitizer querySanitizer,
+                            com.example.incidentinvestigator.knowledge.advanced.QueryDecomposer queryDecomposer,
+                            com.example.incidentinvestigator.knowledge.advanced.RelevanceReranker relevanceReranker) {
         this.chunkRepository = chunkRepository;
         this.documentRepository = documentRepository;
         this.embeddingService = embeddingService;
+        this.querySanitizer = querySanitizer;
+        this.queryDecomposer = queryDecomposer;
+        this.relevanceReranker = relevanceReranker;
     }
 
     /**
@@ -94,6 +103,37 @@ public class RetrievalService {
         return fused;
     }
 
+    /**
+     * Advanced retrieval pipeline with query decomposition, metadata filtering,
+     * hybrid RRF fusion, and LLM relevance reranking.
+     */
+    @Transactional(readOnly = true)
+    public List<RetrievalResult> retrieveAdvanced(String query, int topK, String docTypeFilter, boolean enableRerank) {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+
+        List<String> subQueries = queryDecomposer.decompose(query);
+        Map<UUID, RetrievalResult> aggregated = new HashMap<>();
+
+        for (String subQuery : subQueries) {
+            List<RetrievalResult> hits = retrieve(subQuery, topK * 2);
+            for (RetrievalResult r : hits) {
+                if (docTypeFilter != null && !docTypeFilter.isBlank() && !docTypeFilter.equalsIgnoreCase(r.documentType())) {
+                    continue;
+                }
+                aggregated.putIfAbsent(r.chunkId(), r);
+            }
+        }
+
+        List<RetrievalResult> candidates = new ArrayList<>(aggregated.values());
+        if (enableRerank && !candidates.isEmpty()) {
+            return relevanceReranker.rerank(query, candidates, topK);
+        }
+
+        return candidates.stream().limit(topK).toList();
+    }
+
     private List<SemanticHit> performSemanticSearch(String query, int limit) {
         try {
             float[] queryEmbedding = embeddingService.embed(query);
@@ -122,7 +162,11 @@ public class RetrievalService {
 
     private List<KeywordHit> performKeywordSearch(String query, int limit) {
         try {
-            List<Object[]> rows = chunkRepository.findByKeyword(query, limit);
+            String sanitized = querySanitizer.sanitizeForPlainTsQuery(query);
+            if (sanitized.isBlank()) {
+                sanitized = query;
+            }
+            List<Object[]> rows = chunkRepository.findByKeyword(sanitized, limit);
             List<KeywordHit> hits = new ArrayList<>();
 
             for (Object[] row : rows) {
@@ -133,7 +177,7 @@ public class RetrievalService {
                 hits.add(new KeywordHit(chunkId, documentId, content, rank));
             }
 
-            log.debug("Keyword search returned {} hits", hits.size());
+            log.debug("Keyword search returned {} hits (sanitized query: '{}')", hits.size(), sanitized);
             return hits;
         } catch (Exception e) {
             log.warn("Keyword search failed: {}", e.getMessage());

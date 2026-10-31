@@ -161,6 +161,28 @@ public class IncidentMapper {
     }
 
     /**
+     * Updates an existing InvestigationReport entity in-place from an AI analysis response
+     * and RAG context, preserving its identity and avoiding transient JPA reference issues.
+     */
+    public InvestigationReport updateReportEntity(InvestigationReport report,
+                                                  AiAnalysisResponse aiResponse,
+                                                  List<RetrievalResult> ragContext) {
+        report.setRootCause(aiResponse.getRootCause());
+        report.setConfidenceScore(clampConfidence(aiResponse.getConfidence()));
+        report.setSeverity(aiResponse.getSeverity());
+        report.setTags(serializeObject(aiResponse.getTags()));
+        report.setExecutiveSummary(aiResponse.getExecutiveSummary());
+        report.setEngineeringSummary(aiResponse.getEngineeringSummary());
+        report.setTimeline(serializeObject(aiResponse.getTimeline()));
+        report.setEvidence(serializeObject(aiResponse.getEvidence()));
+        report.setRecommendations(serializeObject(aiResponse.getRecommendations()));
+        report.setSimilarIncidents(serializeObject(aiResponse.getSimilarIncidents()));
+        report.setRagContext(serializeRagContext(ragContext));
+        report.setCitations(serializeObject(aiResponse.getCitations()));
+        return report;
+    }
+
+    /**
      * Backward-compatible overload without RAG context.
      */
     public InvestigationReport toReportEntity(Incident incident, AiAnalysisResponse aiResponse) {

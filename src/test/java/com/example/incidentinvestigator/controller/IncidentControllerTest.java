@@ -48,6 +48,9 @@ class IncidentControllerTest {
     @MockitoBean
     private InvestigationService investigationService;
 
+    @MockitoBean
+    private com.example.incidentinvestigator.service.InvestigationTraceService traceService;
+
     @Test
     @DisplayName("POST /api/incidents - should create incident and return 201")
     void shouldCreateIncident() throws Exception {
