@@ -3,6 +3,7 @@ package com.example.incidentinvestigator.controller;
 import com.example.incidentinvestigator.dto.CreateIncidentRequest;
 import com.example.incidentinvestigator.dto.IncidentResponse;
 import com.example.incidentinvestigator.dto.IncidentSummaryResponse;
+import com.example.incidentinvestigator.dto.InvestigationJobResponse;
 import com.example.incidentinvestigator.dto.ReportResponse;
 import com.example.incidentinvestigator.service.IncidentService;
 import com.example.incidentinvestigator.service.InvestigationService;
@@ -27,8 +28,8 @@ import java.util.UUID;
  * REST controller for incident management and investigation.
  *
  * <p>Provides endpoints for creating incidents, listing incidents,
- * viewing incident details, triggering AI analysis, and retrieving
- * investigation reports.</p>
+ * viewing incident details, triggering AI analysis (sync and async),
+ * and retrieving investigation reports and job status.</p>
  *
  * <p>All endpoints are under {@code /api/incidents}.</p>
  */
@@ -40,18 +41,18 @@ public class IncidentController {
 
     private final IncidentService incidentService;
     private final InvestigationService investigationService;
+    private final com.example.incidentinvestigator.service.InvestigationTraceService traceService;
 
     public IncidentController(IncidentService incidentService,
-                              InvestigationService investigationService) {
+                              InvestigationService investigationService,
+                              com.example.incidentinvestigator.service.InvestigationTraceService traceService) {
         this.incidentService = incidentService;
         this.investigationService = investigationService;
+        this.traceService = traceService;
     }
 
     /**
      * Creates a new incident.
-     *
-     * @param request the incident data (title required, logs and deploymentInfo optional)
-     * @return the created incident with HTTP 201
      */
     @PostMapping
     public ResponseEntity<IncidentResponse> createIncident(
@@ -63,8 +64,6 @@ public class IncidentController {
 
     /**
      * Retrieves all incidents as summary objects.
-     *
-     * @return list of incident summaries ordered by creation date descending
      */
     @GetMapping
     public ResponseEntity<List<IncidentSummaryResponse>> getAllIncidents(
@@ -74,15 +73,13 @@ public class IncidentController {
             @RequestParam(required = false) LocalDateTime startDate,
             @RequestParam(required = false) LocalDateTime endDate) {
         log.info("GET /api/incidents - Fetching incidents with filters");
-        List<IncidentSummaryResponse> incidents = incidentService.getAllIncidents(severity, tags, search, startDate, endDate);
+        List<IncidentSummaryResponse> incidents = incidentService.getAllIncidents(
+                severity, tags, search, startDate, endDate);
         return ResponseEntity.ok(incidents);
     }
 
     /**
      * Retrieves the full details of a single incident.
-     *
-     * @param id the incident UUID
-     * @return the incident details
      */
     @GetMapping("/{id}")
     public ResponseEntity<IncidentResponse> getIncident(@PathVariable UUID id) {
@@ -92,31 +89,66 @@ public class IncidentController {
     }
 
     /**
-     * Triggers AI analysis for the specified incident.
+     * Triggers synchronous AI analysis for the specified incident.
      *
-     * <p>This endpoint may take several seconds to respond as it
-     * calls the LLM provider synchronously.</p>
-     *
-     * @param id the incident UUID
-     * @return the generated investigation report
+     * <p>Backward-compatible endpoint — blocks until the LLM finishes.
+     * For long-running investigations use the async endpoint instead.</p>
      */
     @PostMapping("/{id}/analyze")
     public ResponseEntity<ReportResponse> analyzeIncident(@PathVariable UUID id) {
-        log.info("POST /api/incidents/{}/analyze - Starting analysis", id);
+        log.info("POST /api/incidents/{}/analyze - Starting synchronous analysis", id);
         ReportResponse report = investigationService.analyzeIncident(id);
         return ResponseEntity.ok(report);
     }
 
     /**
-     * Retrieves the investigation report for a given incident.
+     * Submits an asynchronous investigation job for the specified incident.
      *
-     * @param id the incident UUID
-     * @return the investigation report
+     * <p>Returns immediately with a job ID and PENDING status. Poll
+     * {@code GET /api/incidents/{id}/job} to check progress.</p>
+     */
+    @PostMapping("/{id}/analyze/async")
+    public ResponseEntity<InvestigationJobResponse> analyzeIncidentAsync(@PathVariable UUID id) {
+        log.info("POST /api/incidents/{}/analyze/async - Submitting async investigation", id);
+        InvestigationJobResponse job = investigationService.submitAsyncInvestigation(id);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+    }
+
+    /**
+     * Gets the latest investigation job status for a given incident.
+     */
+    @GetMapping("/{id}/job")
+    public ResponseEntity<InvestigationJobResponse> getJobStatus(@PathVariable UUID id) {
+        log.info("GET /api/incidents/{}/job - Fetching job status", id);
+        InvestigationJobResponse job = investigationService.getJobStatus(id);
+        return ResponseEntity.ok(job);
+    }
+
+    /**
+     * Retrieves the investigation report for a given incident.
      */
     @GetMapping("/{id}/report")
     public ResponseEntity<ReportResponse> getReport(@PathVariable UUID id) {
         log.info("GET /api/incidents/{}/report - Fetching report", id);
         ReportResponse report = investigationService.getReport(id);
         return ResponseEntity.ok(report);
+    }
+
+    /**
+     * Retrieves the persistent execution traces for an incident.
+     */
+    @GetMapping("/{id}/traces")
+    public ResponseEntity<List<com.example.incidentinvestigator.dto.InvestigationTraceResponse>> getIncidentTraces(@PathVariable UUID id) {
+        log.info("GET /api/incidents/{}/traces - Fetching traces", id);
+        return ResponseEntity.ok(traceService.getTracesByIncident(id));
+    }
+
+    /**
+     * Retrieves the persistent execution traces for a specific investigation job.
+     */
+    @GetMapping("/jobs/{jobId}/traces")
+    public ResponseEntity<List<com.example.incidentinvestigator.dto.InvestigationTraceResponse>> getJobTraces(@PathVariable UUID jobId) {
+        log.info("GET /api/incidents/jobs/{}/traces - Fetching job traces", jobId);
+        return ResponseEntity.ok(traceService.getTracesByJob(jobId));
     }
 }
